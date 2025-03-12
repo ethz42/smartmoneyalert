@@ -43,4 +43,4 @@ AI_API_KEY=your_ai_api_key
 
 1. Install dependencies: `npm install`
 2. Configure environment variables
-3. Run the program: `npm start` 
+3. Run the program: `npm start`
