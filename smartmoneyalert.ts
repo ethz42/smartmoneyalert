@@ -3,47 +3,82 @@ import type { RunQueryArgs } from "@duneanalytics/client-sdk";
 import { Scraper } from 'agent-twitter-client';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+import nodeFetch from 'node-fetch';
+import { SocksProxyAgent } from 'socks-proxy-agent';
 
-// 加载环境变量
+// Load environment variables
 dotenv.config();
 
-// 初始化Dune客户端
+// SOCKS proxy settings
+const useSocksProxy = true; // Set to true to enable SOCKS proxy
+const proxyUrlRaw = process.env.PROXY_URL || '127.0.0.1:7890'; // Raw proxy address
+const socksProxyUrl = proxyUrlRaw.includes('://') ? proxyUrlRaw : `socks5://${proxyUrlRaw}`; // Ensure protocol prefix
+
+if (useSocksProxy) {
+  console.log(`Using SOCKS proxy: ${socksProxyUrl} with extended options`);
+  // Create SOCKS proxy using URL string
+  const socksAgent = new SocksProxyAgent(socksProxyUrl);
+  
+  // Use fetch with proxy
+  // @ts-ignore
+  global.fetch = (url, options = {}) => {
+    // Add more options to handle TLS issues
+    const fetchOptions = {
+      ...options,
+      agent: socksAgent,
+      timeout: 60000, // 60 seconds timeout
+    };
+    
+    // Add retry logic
+    return new Promise((resolve, reject) => {
+      const attemptFetch = (retries: number) => {
+        // @ts-ignore
+        nodeFetch(url, fetchOptions)
+          .then((response: any) => resolve(response))
+          .catch((error: Error) => {
+            if (retries > 0 && (
+                error.message.includes('ECONNRESET') || 
+                error.message.includes('ERR_TLS_CERT_ALTNAME_INVALID') || 
+                error.message.includes('socket disconnected') || 
+                error.message.includes('TLS')
+            )) {
+              console.log(`Fetch attempt failed, retrying... (${retries} attempts left)`);
+              setTimeout(() => attemptFetch(retries - 1), 2000);
+            } else {
+              reject(error);
+            }
+          });
+      };
+      
+      attemptFetch(3); // Maximum 3 retries
+    });
+  };
+} else {
+  // No proxy
+  // @ts-ignore
+  global.fetch = nodeFetch;
+}
+
+// Make Headers, Request, Response globally available
+// @ts-ignore
+global.Headers = nodeFetch.Headers;
+// @ts-ignore
+global.Request = nodeFetch.Request;
+// @ts-ignore
+global.Response = nodeFetch.Response;
+
+// Initialize Dune client
 const dune = new DuneClient(process.env.DUNE_API_KEY || "JlbyLiMGtYW45JZPRrOoAziFYdpvhCLf");
 
-// 初始化Twitter客户端
-const scraper = new Scraper({
-    transform: {
-        request: (input, init) => {
-            // 添加自定义请求头
-            const customHeaders = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'sec-ch-ua': '"Chromium";v="122", "Google Chrome";v="122", "Not(A:Brand";v="24"',
-                'sec-ch-ua-mobile': '?0',
-                'sec-ch-ua-platform': '"macOS"'
-            };
-            
-            // 合并现有头和自定义头
-            const mergedInit = {
-                ...init,
-                headers: {
-                    ...(init?.headers || {}),
-                    ...customHeaders
-                }
-            };
-            
-            return [input, mergedInit];
-        },
-    },
-});
+// Initialize Twitter client
+const scraper = new Scraper()
 
-// 初始化Supabase客户端
+// Initialize Supabase client
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// 获取交易记录
+// Get trade records
 const getTradeRecords = async (address: string) => {
     try {
         const queryId = 4831125;
@@ -84,27 +119,27 @@ const getTradeRecords = async (address: string) => {
         
         return tradeRecords;
     } catch (error) {
-        console.error('Error get records', error);
-        throw new Error('Error get records');
+        console.error('Error getting trade records:', error);
+        throw new Error('Error getting trade records');
     }
 }
 
-// 获取聪明钱地址
+// Get smart money addresses
 const getSmartMoneyAddresses = async () => {
     try {
-        // 从smart_money表获取地址
+        // Get addresses from smart_money table
         const { data: smartMoneyData, error } = await supabase
             .from('smart_money')
             .select('address');
             
         if (error) {
-            throw new Error(`获取smart_money数据失败: ${error.message}`);
+            throw new Error(`Failed to get smart_money data: ${error.message}`);
         }
         
         const stringArray: string[] = [];
         let t = 0;
         
-        // 获取地址，最多5个
+        // Get up to 5 addresses
         if (smartMoneyData) {
             for (const row of smartMoneyData) {
                 if (t < 5) {
@@ -116,15 +151,15 @@ const getSmartMoneyAddresses = async () => {
         
         return stringArray;
     } catch (error) {
-        console.error('Error get smart money addresses', error);
-        throw new Error('Error get smart money addresses');
+        console.error('Error getting smart money addresses:', error);
+        throw new Error('Error getting smart money addresses');
     }
 }
 
-// 使用AI分析交易记录
+// Analyze trade records with AI
 const analyzeTradeRecords = async (tradeRecords: string) => {
     const aiQuery = `evaluate this trader within 110 words: ${tradeRecords}`;
-    console.log("开始分析交易记录...");
+    console.log("Starting trade record analysis...");
     
     const options = {
         method: 'POST',
@@ -153,111 +188,216 @@ const analyzeTradeRecords = async (tradeRecords: string) => {
         };
         return data.choices[0].message.content;
     } catch (err) {
-        console.error('AI分析失败:', err);
-        throw new Error('AI分析失败');
+        console.error('AI analysis failed:', err);
+        throw new Error('AI analysis failed');
     }
 }
 
-// 检查并确保Twitter登录
+// Check and ensure Twitter login
 const ensureTwitterLogin = async () => {
-    try {
-        const isLoggedIn = await scraper.isLoggedIn();
-        if (!isLoggedIn) {
-            console.log('正在登录Twitter...');
-            // 随机延迟1-3秒，模拟人类行为
-            const randomDelay = 1000 + Math.floor(Math.random() * 2000);
-            await new Promise(resolve => setTimeout(resolve, randomDelay));
+    const maxLoginRetries = 3;
+    let loginRetryCount = 0;
+    
+    while (loginRetryCount < maxLoginRetries) {
+        try {
+            console.log(`Attempting to check Twitter login status... Attempt ${loginRetryCount + 1}/${maxLoginRetries}`);
             
-            await scraper.login(
-                process.env.TWITTER_USERNAME || '',
-                process.env.TWITTER_PASSWORD || '',
-                process.env.TWITTER_EMAIL,
-                undefined,
-                process.env.TWITTER_API_KEY,
-                process.env.TWITTER_API_SECRET_KEY,
-                process.env.TWITTER_ACCESS_TOKEN,
-                process.env.TWITTER_ACCESS_TOKEN_SECRET
-            );
-            console.log('Twitter登录成功');
-        } else {
-            console.log('已登录Twitter');
+            // First check if already logged in
+            let isLoggedIn = false;
+            try {
+                isLoggedIn = await scraper.isLoggedIn();
+            } catch (checkError) {
+                console.error('Error checking login status:', checkError);
+                // If check fails, assume not logged in
+                isLoggedIn = false;
+            }
+            
+            if (!isLoggedIn) {
+                console.log('Logging into Twitter...');
+                // Random delay 2-5 seconds to simulate human behavior
+                const randomDelay = 2000 + Math.floor(Math.random() * 3000);
+                console.log(`Waiting ${randomDelay/1000} seconds before login attempt...`);
+                await new Promise(resolve => setTimeout(resolve, randomDelay));
+                
+                try {
+                    await scraper.login(
+                        process.env.TWITTER_USERNAME || '',
+                        process.env.TWITTER_PASSWORD || '',
+                        process.env.TWITTER_EMAIL,
+                        process.env.TWITTER_API_KEY,
+                        process.env.TWITTER_API_SECRET_KEY,
+                        process.env.TWITTER_ACCESS_TOKEN,
+                        process.env.TWITTER_ACCESS_TOKEN_SECRET
+                    );
+                    console.log('Twitter login successful');
+                    return true;
+                } catch (loginError) {
+                    console.error('Twitter login failed:', loginError);
+                    loginRetryCount++;
+                    
+                    if (loginRetryCount < maxLoginRetries) {
+                        const waitTime = 10000 * loginRetryCount;
+                        console.log(`Waiting ${waitTime/1000} seconds before retry...`);
+                        await new Promise(resolve => setTimeout(resolve, waitTime));
+                    }
+                    continue;
+                }
+            } else {
+                console.log('Already logged into Twitter');
+                return true;
+            }
+        } catch (error) {
+            console.error('Error during Twitter login process:', error);
+            loginRetryCount++;
+            
+            if (loginRetryCount < maxLoginRetries) {
+                const waitTime = 10000 * loginRetryCount;
+                console.log(`Waiting ${waitTime/1000} seconds before retry...`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+            }
         }
-        return true;
-    } catch (error) {
-        console.error('Twitter登录失败:', error);
-        return false;
     }
+    
+    console.error(`Twitter login failed, reached maximum retry attempts ${maxLoginRetries}`);
+    return false;
 }
 
-// 发送推文
+// Send tweet
 const sendTweet = async (content: string, address: string) => {
-    const maxRetries = 3;
+    const maxRetries = 5; // Increase maximum retry attempts
     let retryCount = 0;
     
     while (retryCount < maxRetries) {
         try {
-            console.log(`准备发送关于地址 ${address} 的分析推文...尝试 ${retryCount + 1}/${maxRetries}`);
+            console.log(`Preparing to send analysis tweet for address ${address}...Attempt ${retryCount + 1}/${maxRetries}`);
             
-            // 确保已登录
+            // Ensure logged in
             const loginSuccess = await ensureTwitterLogin();
             if (!loginSuccess) {
+                console.log("Twitter login failed, waiting 5 seconds before retry...");
+                await new Promise(resolve => setTimeout(resolve, 5000));
                 retryCount++;
                 continue;
             }
             
-            // 随机延迟1-2秒
-            await new Promise(resolve => setTimeout(resolve, 1000 + Math.floor(Math.random() * 1000)));
+            // Random delay 2-5 seconds
+            const randomDelay = 2000 + Math.floor(Math.random() * 3000);
+            console.log(`Waiting ${randomDelay/1000} seconds before sending tweet...`);
+            await new Promise(resolve => setTimeout(resolve, randomDelay));
             
-            // 构建推文内容
-            const tweetContent = `🔍 聪明钱地址分析 ${address.substring(0, 6)}...${address.substring(address.length - 4)}\n\n${content}\n\n#加密货币 #交易分析 #聪明钱`;
+            // Build tweet content, ensure under 280 characters
+            const addressShort = `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+            const hashtags = "#Crypto #Trading";
             
-            // 发送推文
-            const response = await scraper.sendTweet(tweetContent);
-            const responseData = await response.json() as { 
-                data?: { 
-                    create_tweet?: { 
-                        tweet_results?: { 
-                            result?: { 
-                                rest_id?: string 
-                            } 
-                        } 
-                    } 
-                } 
-            };
-            const tweetId = responseData?.data?.create_tweet?.tweet_results?.result?.rest_id;
+            // Calculate length of fixed parts (short address, title, line breaks and hashtags)
+            const fixedContentLength = `🔍 Smart Money Analysis ${addressShort}\n\n`.length + `\n\n${hashtags}`.length;
             
-            if (tweetId) {
-                console.log(`推文发送成功！推文ID: ${tweetId}`);
-                return tweetId;
+            // Calculate maximum content length to ensure total is under 280
+            const maxContentLength = 280 - fixedContentLength;
+            
+            // If content too long, truncate
+            let trimmedContent = content;
+            if (content.length > maxContentLength) {
+                trimmedContent = content.substring(0, maxContentLength - 3) + "...";
+                console.log(`Content truncated to ${trimmedContent.length} characters`);
             }
             
-            console.error('发送推文失败，无法获取推文ID');
+            // Final tweet content
+            const tweetContent = `🔍 Smart Money Analysis ${addressShort}\n\n${trimmedContent}\n\n${hashtags}`;
+            console.log(`Tweet length: ${tweetContent.length} characters`);
+            
+            console.log("Sending tweet...");
+            // Send tweet
+            try {
+                const response = await scraper.sendTweet(tweetContent);
+                const responseData = await response.json() as { 
+                    data?: { 
+                        create_tweet?: { 
+                            tweet_results?: { 
+                                result?: { 
+                                    rest_id?: string 
+                                } 
+                            } 
+                        } 
+                    },
+                    errors?: Array<{
+                        message: string,
+                        code: number
+                    }>
+                };
+                
+                // Check for errors
+                if (responseData.errors && responseData.errors.length > 0) {
+                    console.error('Twitter API returned errors:', JSON.stringify(responseData.errors));
+                    
+                    // If character limit error, try shortening content further
+                    if (responseData.errors.some(e => e.code === 186)) {
+                        console.log('Tweet content too long, attempting to shorten further...');
+                        trimmedContent = content.substring(0, Math.floor(maxContentLength * 0.8)) + "...";
+                        const shorterTweetContent = `🔍 Smart Money ${addressShort}\n\n${trimmedContent}\n\n#Crypto`;
+                        console.log(`Shortened tweet length: ${shorterTweetContent.length} characters`);
+                        
+                        // Wait a bit before retry
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        const retryResponse = await scraper.sendTweet(shorterTweetContent);
+                        const retryData = await retryResponse.json() as typeof responseData;
+                        
+                        if (retryData.data?.create_tweet?.tweet_results?.result?.rest_id) {
+                            console.log(`Tweet sent successfully! Tweet ID: ${retryData.data.create_tweet.tweet_results.result.rest_id}`);
+                            return retryData.data.create_tweet.tweet_results.result.rest_id;
+                        }
+                    }
+                    
+                    // Other errors, continue retrying
+                    retryCount++;
+                    continue;
+                }
+                
+                const tweetId = responseData?.data?.create_tweet?.tweet_results?.result?.rest_id;
+                
+                if (tweetId) {
+                    console.log(`Tweet sent successfully! Tweet ID: ${tweetId}`);
+                    return tweetId;
+                }
+                
+                console.error('Failed to send tweet, unable to get tweet ID, response data:', JSON.stringify(responseData));
+            } catch (tweetError) {
+                console.error('Error sending tweet:', tweetError);
+                // Special handling for TLS/SSL errors
+                if (tweetError instanceof Error && 
+                    (tweetError.message.includes('TLS') || 
+                     tweetError.message.includes('socket') || 
+                     tweetError.message.includes('certificate'))) {
+                    console.log("Detected TLS/SSL connection issue, possibly unstable proxy connection");
+                }
+            }
+            
             retryCount++;
             
-            // 如果失败但还有重试次数，等待更长时间
+            // If failed but still have retries, wait longer
             if (retryCount < maxRetries) {
-                const waitTime = 5000 * retryCount; // 递增等待时间
-                console.log(`等待 ${waitTime/1000} 秒后重试...`);
+                const waitTime = 10000 * retryCount; // Increasing wait time, starting from 10 seconds
+                console.log(`Waiting ${waitTime/1000} seconds before retry...`);
                 await new Promise(resolve => setTimeout(resolve, waitTime));
             }
         } catch (error) {
-            console.error('发送推文时出错:', error);
+            console.error('Error in tweet sending process:', error);
             retryCount++;
             
-            // 如果失败但还有重试次数，等待更长时间
+            // If failed but still have retries, wait longer
             if (retryCount < maxRetries) {
-                const waitTime = 5000 * retryCount; // 递增等待时间
-                console.log(`等待 ${waitTime/1000} 秒后重试...`);
+                const waitTime = 10000 * retryCount; // Increasing wait time
+                console.log(`Waiting ${waitTime/1000} seconds before retry...`);
                 await new Promise(resolve => setTimeout(resolve, waitTime));
             }
         }
     }
     
-    console.error(`发送推文失败，已达到最大重试次数 ${maxRetries}`);
+    console.error(`Failed to send tweet, reached maximum retry attempts ${maxRetries}`);
     return null;
 }
 
-// 将处理过的地址记录到Supabase
+// Record processed address in Supabase
 const recordProcessedAddress = async (address: string) => {
     try {
         const today = new Date().toISOString().split('T')[0];
@@ -266,68 +406,65 @@ const recordProcessedAddress = async (address: string) => {
             .insert([
                 { address, processed_date: today }
             ]);
-        console.log(`地址 ${address} 已记录为已处理`);
+        console.log(`Address ${address} has been recorded as processed`);
     } catch (error) {
-        console.error('记录处理地址失败:', error);
+        console.error('Failed to record processed address:', error);
     }
 }
 
-// 主函数
+// Main function
 async function main() {
     try {
-        // 提前登录Twitter
+        // Login to Twitter in advance
         await ensureTwitterLogin();
         
-        console.log("开始获取聪明钱地址...");
+        console.log("Starting to get smart money addresses...");
         const smartMoneyAddresses = await getSmartMoneyAddresses();
         
         if (smartMoneyAddresses.length === 0) {
-            console.log("今天没有新的聪明钱地址需要处理");
+            console.log("No new smart money addresses to process today");
             return;
         }
         
-        console.log(`获取到 ${smartMoneyAddresses.length} 个未处理的聪明钱地址`);
+        console.log(`Retrieved ${smartMoneyAddresses.length} unprocessed smart money addresses`);
         
-        for (const address of smartMoneyAddresses) {
-            try {
-                console.log(`正在处理地址: ${address}`);
-                
-                // 获取交易记录
-                console.log("获取交易记录...");
-                const tradeRecords = await getTradeRecords(address);
-                
-                if (!tradeRecords || tradeRecords.trim() === '') {
-                    console.log(`地址 ${address} 没有有效的交易记录，跳过`);
-                    await recordProcessedAddress(address);
-                    continue;
-                }
-                
-                // 分析交易记录
-                const analysis = await analyzeTradeRecords(tradeRecords);
-                console.log("分析结果:", analysis);
-                
-                // 发送推文
-                const tweetId = await sendTweet(analysis, address);
-                
-                if (tweetId) {
-                    // 记录已处理的地址
-                    await recordProcessedAddress(address);
-                }
-                
-                // 等待一段时间，避免API限制
-                await new Promise(resolve => setTimeout(resolve, 5000));
-                
-            } catch (error) {
-                console.error(`处理地址 ${address} 时出错:`, error);
+        // Process only one address per day
+        const address = smartMoneyAddresses[0];
+        try {
+            console.log(`Processing address: ${address}`);
+            
+            // Get trade records
+            console.log("Getting trade records...");
+            const tradeRecords = await getTradeRecords(address);
+            
+            if (!tradeRecords || tradeRecords.trim() === '') {
+                console.log(`Address ${address} has no valid trade records, skipping`);
+                await recordProcessedAddress(address);
+                return;
             }
+            
+            // Analyze trade records
+            const analysis = await analyzeTradeRecords(tradeRecords);
+            console.log("Analysis result:", analysis);
+            
+            // Send tweet
+            const tweetId = await sendTweet(analysis, address);
+            
+            if (tweetId) {
+                // Record processed address
+                await recordProcessedAddress(address);
+            }
+            
+        } catch (error) {
+            console.error(`Error processing address ${address}:`, error);
         }
         
-        console.log("所有地址处理完成");
+        console.log("Daily smart money analysis completed");
         
     } catch (error) {
-        console.error("程序执行出错:", error);
+        console.error("Program execution error:", error);
     }
 }
 
-// 运行主函数
+// Run main function
 main();

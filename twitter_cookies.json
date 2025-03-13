@@ -1,0 +1,74 @@
+[
+  {
+    "name": "guest_id_marketing",
+    "value": "v1%3A174185274780577550",
+    "domain": ".twitter.com",
+    "path": "/"
+  },
+  {
+    "name": "guest_id_ads",
+    "value": "v1%3A174185274780577550",
+    "domain": ".twitter.com",
+    "path": "/"
+  },
+  {
+    "name": "g_state",
+    "value": "{\"i_p\":1741938284195,\"i_l\":2}",
+    "domain": ".twitter.com",
+    "path": "/"
+  },
+  {
+    "name": "dnt",
+    "value": "1",
+    "domain": ".twitter.com",
+    "path": "/"
+  },
+  {
+    "name": "lang",
+    "value": "en",
+    "domain": ".twitter.com",
+    "path": "/"
+  },
+  {
+    "name": "gt",
+    "value": "1900089709080305675",
+    "domain": ".twitter.com",
+    "path": "/"
+  },
+  {
+    "name": "guest_id",
+    "value": "v1%3A174185274780577550",
+    "domain": ".twitter.com",
+    "path": "/"
+  },
+  {
+    "name": "ct0",
+    "value": "d00e41275c913701715fe7ab3ef3d2e11ae819a05188eb30433d593cff88cfc3610106e9056d8dc504d34f51d5b538733d87728a5d1150bfc4908b066160cf54a65a02940c111ddd3ee41913ced14554",
+    "domain": ".twitter.com",
+    "path": "/"
+  },
+  {
+    "name": "_ga_BLY4P7T5KW",
+    "value": "GS1.1.1741851790.1.1.1741852786.15.0.0",
+    "domain": ".twitter.com",
+    "path": "/"
+  },
+  {
+    "name": "_ga",
+    "value": "GA1.1.1582210886.1741851790",
+    "domain": ".twitter.com",
+    "path": "/"
+  },
+  {
+    "name": "twid",
+    "value": "u%3D1711467910814646272",
+    "domain": ".twitter.com",
+    "path": "/"
+  },
+  {
+    "name": "personalization_id",
+    "value": "\"v1_Lv63lQN2VbuAq5f0o6QYUQ",
+    "domain": ".twitter.com",
+    "path": "/"
+  }
+]
